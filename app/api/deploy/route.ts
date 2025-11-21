@@ -53,30 +53,46 @@ export async function POST(request: Request) {
     const readme = generateModelCard(modelName, modelConfig, metrics, fullRepoId)
     const config = generateConfigJson(modelConfig, metrics)
     const modelFile = generateMockModelFile(modelConfig)
+    const tokenizerConfig = generateTokenizerConfig()
+    const trainingArgs = generateTrainingArgs(modelConfig, metrics)
 
-    // Upload files using HuggingFace Hub API
+    // Upload files using HuggingFace Hub API with proper content
     const files = [
-      { path: 'README.md', content: readme },
-      { path: 'config.json', content: config },
-      { path: 'pytorch_model.bin', content: modelFile, isBinary: true },
+      { path: 'README.md', content: readme, contentType: 'text/markdown' },
+      { path: 'config.json', content: config, contentType: 'application/json' },
+      { path: 'tokenizer_config.json', content: tokenizerConfig, contentType: 'application/json' },
+      { path: 'training_args.json', content: trainingArgs, contentType: 'application/json' },
+      { path: 'pytorch_model.bin', content: modelFile, contentType: 'application/octet-stream' },
     ]
 
-    // Upload each file
+    // Upload each file with retry logic
+    const uploadResults = []
     for (const file of files) {
       try {
-        await uploadFileToHF(token, fullRepoId, file.path, file.content, file.isBinary)
+        const result = await uploadFileWithRetry(token, fullRepoId, file.path, file.content, file.contentType)
+        uploadResults.push({ file: file.path, success: true })
       } catch (uploadError) {
         console.error(`Failed to upload ${file.path}:`, uploadError)
+        uploadResults.push({ file: file.path, success: false, error: uploadError })
         // Continue with other files even if one fails
       }
     }
 
     const repoUrl = `https://huggingface.co/${fullRepoId}`
+    
+    const successfulUploads = uploadResults.filter(r => r.success).length
+    const totalFiles = uploadResults.length
 
     return NextResponse.json({
       success: true,
       repoUrl,
       repoId: fullRepoId,
+      uploadResults: {
+        successful: successfulUploads,
+        total: totalFiles,
+        files: uploadResults
+      },
+      message: `Repository created successfully. ${successfulUploads}/${totalFiles} files uploaded. You can now upload your trained model weights (.pth file) to complete the deployment.`
     })
 
   } catch (error) {
@@ -87,33 +103,74 @@ export async function POST(request: Request) {
   }
 }
 
-// Upload file to HuggingFace using the Hub API
-async function uploadFileToHF(
+// Upload file to HuggingFace using the Hub API with proper encoding
+async function uploadFileWithRetry(
   token: string, 
   repoId: string, 
   filePath: string, 
   content: string,
-  isBinary: boolean = false
-) {
-  const url = `https://huggingface.co/api/models/${repoId}/upload/main/${filePath}`
-  
-  const formData = new FormData()
-  const blob = new Blob([content], { type: isBinary ? 'application/octet-stream' : 'text/plain' })
-  formData.append('file', blob, filePath)
+  contentType: string,
+  retries: number = 3
+): Promise<any> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      // Use the HuggingFace Hub API endpoint for file uploads
+      const url = `https://huggingface.co/api/models/${repoId}/upload/main/${filePath}`
+      
+      // Convert content to base64 for reliable transmission
+      const base64Content = Buffer.from(content).toString('base64')
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content: base64Content,
+          encoding: 'base64',
+          path: filePath,
+          branch: 'main',
+        }),
+      })
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-    body: formData,
-  })
+      if (response.ok) {
+        return await response.json()
+      }
 
-  if (!response.ok) {
-    throw new Error(`Failed to upload ${filePath}: ${response.statusText}`)
+      // If not ok, try alternative method
+      const formData = new FormData()
+      const blob = new Blob([content], { type: contentType })
+      formData.append('file', blob, filePath)
+
+      const altResponse = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      })
+
+      if (altResponse.ok) {
+        return await altResponse.json()
+      }
+
+      if (attempt === retries - 1) {
+        const errorText = await altResponse.text()
+        throw new Error(`Failed after ${retries} attempts: ${errorText}`)
+      }
+
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+    } catch (error) {
+      if (attempt === retries - 1) {
+        throw error
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+    }
   }
-
-  return response.json()
+  
+  throw new Error('Upload failed after all retries')
 }
 
 // Generate config.json
@@ -152,15 +209,93 @@ function generateConfigJson(modelConfig: any, metrics: any): string {
 
 // Generate a mock model file (in production, this would be the actual trained model)
 function generateMockModelFile(modelConfig: any): string {
-  // This is a placeholder. In production, you would upload actual model weights
-  return JSON.stringify({
-    "model_state_dict": "placeholder",
-    "optimizer_state_dict": "placeholder",
+  // Create a minimal PyTorch model structure
+  // In production, this would be replaced with actual trained weights
+  const modelStructure = {
+    "model_state_dict": {
+      "embeddings.weight": "tensor_placeholder",
+      "encoder.layer.0.weight": "tensor_placeholder",
+      "classifier.weight": "tensor_placeholder",
+      "classifier.bias": "tensor_placeholder"
+    },
+    "optimizer_state_dict": {
+      "state": {},
+      "param_groups": []
+    },
     "epoch": 10,
     "loss": 0.1,
-    "note": "This is a placeholder model file. Upload your actual trained model weights to replace this file.",
+    "metadata": {
+      "framework": modelConfig?.framework || "pytorch",
+      "model_type": modelConfig?.model_type || "transformer",
+      "task": modelConfig?.task_type || "classification",
+      "training_mode": modelConfig?.training_mode || "supervised",
+      "created_by": "Pipeline AI",
+      "created_at": new Date().toISOString(),
+      "note": "This is a placeholder model file. To use this model in production, upload your actual trained PyTorch model weights (.pth or .bin file) to replace this file."
+    }
+  }
+  
+  return JSON.stringify(modelStructure, null, 2)
+}
+
+// Generate tokenizer configuration
+function generateTokenizerConfig(): string {
+  return JSON.stringify({
+    "tokenizer_class": "AutoTokenizer",
+    "model_max_length": 512,
+    "padding_side": "right",
+    "truncation_side": "right",
+    "special_tokens": {
+      "bos_token": "<s>",
+      "eos_token": "</s>",
+      "unk_token": "<unk>",
+      "sep_token": "</s>",
+      "pad_token": "<pad>",
+      "cls_token": "<s>",
+      "mask_token": "<mask>"
+    },
+    "clean_up_tokenization_spaces": true,
+    "tokenize_chinese_chars": true,
+    "strip_accents": null,
+    "do_lower_case": false
+  }, null, 2)
+}
+
+// Generate training arguments
+function generateTrainingArgs(modelConfig: any, metrics: any): string {
+  return JSON.stringify({
+    "output_dir": "./results",
+    "num_train_epochs": 10,
+    "per_device_train_batch_size": modelConfig?.compute_type === 'tpu' ? 64 : 
+                                     modelConfig?.compute_type === 'gpu' ? 32 : 16,
+    "per_device_eval_batch_size": 8,
+    "warmup_steps": 500,
+    "weight_decay": 0.01,
+    "logging_dir": "./logs",
+    "logging_steps": 10,
+    "evaluation_strategy": "steps",
+    "eval_steps": 500,
+    "save_steps": 1000,
+    "save_total_limit": 2,
+    "load_best_model_at_end": true,
+    "metric_for_best_model": "accuracy",
+    "greater_is_better": true,
+    "learning_rate": 2e-5,
+    "adam_epsilon": 1e-8,
+    "max_grad_norm": 1.0,
+    "fp16": modelConfig?.compute_type === 'gpu' || modelConfig?.compute_type === 'tpu',
+    "dataloader_num_workers": 4,
+    "remove_unused_columns": true,
+    "label_names": ["labels"],
+    "push_to_hub": false,
     "framework": modelConfig?.framework || "pytorch",
+    "training_mode": modelConfig?.training_mode || "supervised",
+    "final_metrics": metrics ? {
+      "accuracy": metrics.final_accuracy,
+      "loss": metrics.final_loss
+    } : null,
     "created_by": "Pipeline AI",
+    "created_at": new Date().toISOString()
   }, null, 2)
 }
 

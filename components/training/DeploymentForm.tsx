@@ -61,9 +61,13 @@ export default function DeploymentForm({ onDeploy, model, metrics }: DeploymentF
       setDeploymentStatus('success')
       setDeploymentUrl(result.repoUrl)
       
-      // Show success message
+      // Show detailed success message
+      const uploadInfo = result.uploadResults 
+        ? `\n\n📦 Files uploaded: ${result.uploadResults.successful}/${result.uploadResults.total}`
+        : ''
+      
       setTimeout(() => {
-        alert(`✅ Model deployed successfully!\n\n🔗 Repository: ${result.repoUrl}\n\n📝 Note: The repository has been created with a model card. You can now upload your model weights to complete the deployment.`)
+        alert(`✅ Model deployed successfully!${uploadInfo}\n\n🔗 Repository: ${result.repoUrl}\n\n📝 What's included:\n• Model card (README.md)\n• Configuration files\n• Training metadata\n• Placeholder model weights\n\n⚠️ Next steps:\n1. Visit your repository\n2. Upload your trained model weights (.pth file)\n3. The model will be ready for inference!\n\n💡 Tip: Use the HuggingFace Hub Python library to upload your actual trained model weights.`)
       }, 500)
       
       onDeploy(hfToken)
