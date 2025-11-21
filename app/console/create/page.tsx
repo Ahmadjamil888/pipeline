@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, ArrowRight, Upload, Link as LinkIcon, File, Cpu, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Upload, Link as LinkIcon, File, Cpu, Zap, CheckCircle } from 'lucide-react'
 
 export default function CreateModelPage() {
   const router = useRouter()
@@ -12,6 +12,8 @@ export default function CreateModelPage() {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
+    creationMode: 'fine-tune', // 'fine-tune' or 'from-scratch'
+    trainingMode: 'supervised', // 'supervised', 'unsupervised', 'reinforcement'
     modelType: '',
     taskType: '',
     targetClass: '',
@@ -24,6 +26,7 @@ export default function CreateModelPage() {
     baseModelUrl: '',
     baseModelFile: null as File | null,
     customModelUpload: false,
+    autoFindDataset: false,
   })
   
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -58,28 +61,34 @@ export default function CreateModelPage() {
       // Create model record (with fallback for demo)
       let model = null
       
+      const modelData = {
+        user_id: user?.id || 'demo-user',
+        name: formData.name,
+        description: formData.description,
+        model_type: formData.modelType || (formData.creationMode === 'from-scratch' ? 'custom' : 'transformer'),
+        framework: formData.framework,
+        base_model: formData.creationMode === 'fine-tune' ? formData.baseModel : null,
+        dataset_source: formData.autoFindDataset ? 'auto' : formData.datasetSource,
+        dataset_name: formData.datasetUrl,
+        training_status: 'pending',
+        training_mode: formData.creationMode === 'from-scratch' ? formData.trainingMode : 'fine_tuning',
+        model_config: {
+          creation_mode: formData.creationMode,
+          training_mode: formData.trainingMode,
+          task_type: formData.taskType,
+          target_class: formData.targetClass,
+          compute_type: formData.computeType,
+          custom_model_upload: formData.customModelUpload,
+          auto_find_dataset: formData.autoFindDataset,
+        },
+        training_config: {},
+      }
+      
       try {
         if (user) {
           const { data: dbModel, error } = await supabase
             .from('ai_models')
-            .insert({
-              user_id: user.id,
-              name: formData.name,
-              description: formData.description,
-              model_type: formData.modelType,
-              framework: formData.framework,
-              base_model: formData.baseModel,
-              dataset_source: formData.datasetSource,
-              dataset_name: formData.datasetUrl,
-              training_status: 'pending',
-              model_config: {
-                task_type: formData.taskType,
-                target_class: formData.targetClass,
-                compute_type: formData.computeType,
-                custom_model_upload: formData.customModelUpload,
-              },
-              training_config: {},
-            })
+            .insert(modelData)
             .select()
             .single()
 
@@ -95,22 +104,7 @@ export default function CreateModelPage() {
       if (!model) {
         model = {
           id: `mock-model-${Date.now()}`,
-          user_id: user?.id || 'demo-user',
-          name: formData.name,
-          description: formData.description,
-          model_type: formData.modelType,
-          framework: formData.framework,
-          base_model: formData.baseModel,
-          dataset_source: formData.datasetSource,
-          dataset_name: formData.datasetUrl,
-          training_status: 'pending',
-          model_config: {
-            task_type: formData.taskType,
-            target_class: formData.targetClass,
-            compute_type: formData.computeType,
-            custom_model_upload: formData.customModelUpload,
-          },
-          training_config: {},
+          ...modelData,
         }
       }
 
@@ -140,6 +134,115 @@ export default function CreateModelPage() {
           <p className="text-gray-600 mb-8">Fill in the details to train your custom AI model</p>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Creation Mode */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-2">
+                Creation Mode *
+              </label>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, creationMode: 'fine-tune' })}
+                  className={`p-4 border rounded-lg text-left transition ${
+                    formData.creationMode === 'fine-tune' 
+                      ? 'border-blue-600 bg-blue-50' 
+                      : 'border-gray-300 hover-bg-gray-50'
+                  }`}
+                >
+                  <div className="font-semibold text-gray-900 mb-1">Fine-tune Existing Model</div>
+                  <div className="text-sm text-gray-600">Start with a pre-trained model and adapt it to your data</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, creationMode: 'from-scratch' })}
+                  className={`p-4 border rounded-lg text-left transition ${
+                    formData.creationMode === 'from-scratch' 
+                      ? 'border-blue-600 bg-blue-50' 
+                      : 'border-gray-300 hover-bg-gray-50'
+                  }`}
+                >
+                  <div className="font-semibold text-gray-900 mb-1">Create from Scratch</div>
+                  <div className="text-sm text-gray-600">Build and train a completely new model architecture</div>
+                </button>
+              </div>
+            </div>
+
+            {/* Training Mode (for from-scratch) */}
+            {formData.creationMode === 'from-scratch' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">
+                  Training Mode *
+                </label>
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, trainingMode: 'supervised' })}
+                    className={`w-full p-4 border rounded-lg text-left transition ${
+                      formData.trainingMode === 'supervised' 
+                        ? 'border-blue-600 bg-blue-50' 
+                        : 'border-gray-300 hover-bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="font-semibold text-gray-900 mb-1">Supervised Learning</div>
+                        <div className="text-sm text-gray-600">
+                          Train on labeled data with input-output pairs. Best for classification, regression, and instruction-following tasks.
+                        </div>
+                      </div>
+                      {formData.trainingMode === 'supervised' && (
+                        <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 ml-2" />
+                      )}
+                    </div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, trainingMode: 'unsupervised' })}
+                    className={`w-full p-4 border rounded-lg text-left transition ${
+                      formData.trainingMode === 'unsupervised' 
+                        ? 'border-blue-600 bg-blue-50' 
+                        : 'border-gray-300 hover-bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="font-semibold text-gray-900 mb-1">Unsupervised Learning</div>
+                        <div className="text-sm text-gray-600">
+                          Discover patterns in unlabeled data. Best for clustering, anomaly detection, and feature learning.
+                        </div>
+                      </div>
+                      {formData.trainingMode === 'unsupervised' && (
+                        <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 ml-2" />
+                      )}
+                    </div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, trainingMode: 'reinforcement' })}
+                    className={`w-full p-4 border rounded-lg text-left transition ${
+                      formData.trainingMode === 'reinforcement' 
+                        ? 'border-blue-600 bg-blue-50' 
+                        : 'border-gray-300 hover-bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="font-semibold text-gray-900 mb-1">Reinforcement Learning (RLHF)</div>
+                        <div className="text-sm text-gray-600">
+                          Learn through trial and error with rewards. Best for decision-making, game AI, and preference optimization.
+                        </div>
+                      </div>
+                      {formData.trainingMode === 'reinforcement' && (
+                        <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 ml-2" />
+                      )}
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Model Name */}
             <div>
               <label className="block text-sm font-semibold text-gray-900 mb-2">
@@ -150,7 +253,7 @@ export default function CreateModelPage() {
                 required
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="form-input"
                 placeholder="My Awesome Model"
               />
             </div>
@@ -282,13 +385,36 @@ export default function CreateModelPage() {
               <label className="block text-sm font-semibold text-gray-900 mb-2">
                 Dataset Source *
               </label>
+              
+              {formData.creationMode === 'from-scratch' && (
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.autoFindDataset}
+                      onChange={(e) => setFormData({ ...formData, autoFindDataset: e.target.checked })}
+                      className="w-4 h-4 text-blue-600"
+                    />
+                    <span className="text-sm font-medium text-blue-900">
+                      🤖 Auto-find and optimize dataset using AI
+                    </span>
+                  </label>
+                  <p className="text-xs text-blue-700 mt-1 ml-6">
+                    AI will search for the best dataset, clean it, and prepare it for training
+                  </p>
+                </div>
+              )}
+              
               <select
-                required
+                required={!formData.autoFindDataset}
                 value={formData.datasetSource}
                 onChange={(e) => setFormData({ ...formData, datasetSource: e.target.value })}
                 className="form-select"
+                disabled={formData.autoFindDataset}
               >
-                <option value="">Select source</option>
+                <option value="">
+                  {formData.autoFindDataset ? 'AI will find the best dataset' : 'Select source'}
+                </option>
                 <option value="huggingface">HuggingFace Dataset</option>
                 <option value="kaggle">Kaggle Dataset</option>
                 <option value="upload">Upload Custom Dataset</option>
@@ -384,7 +510,8 @@ export default function CreateModelPage() {
               </div>
             )}
 
-            {/* Base Model Options */}
+            {/* Base Model Options (only for fine-tune mode) */}
+            {formData.creationMode === 'fine-tune' && (
             <div>
               <label className="block text-sm font-semibold text-gray-900 mb-2">
                 Base Model (Optional)
@@ -470,6 +597,56 @@ export default function CreateModelPage() {
                 )}
               </div>
             </div>
+            )}
+
+            {/* From Scratch Info */}
+            {formData.creationMode === 'from-scratch' && (
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                <div className="flex items-start space-x-3">
+                  <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-green-900 mb-1">
+                      Building from Scratch with {formData.trainingMode === 'supervised' ? 'Supervised' : formData.trainingMode === 'unsupervised' ? 'Unsupervised' : 'Reinforcement'} Learning
+                    </div>
+                    <div className="text-sm text-green-700">
+                      {formData.trainingMode === 'supervised' && (
+                        <>
+                          <p className="mb-2">Your model will learn from labeled examples:</p>
+                          <ul className="list-disc list-inside space-y-1 text-xs">
+                            <li>Instruction following and task completion</li>
+                            <li>Pattern recognition from input-output pairs</li>
+                            <li>Supervised fine-tuning (SFT) for optimal performance</li>
+                            <li>Safety alignment and refusal training</li>
+                          </ul>
+                        </>
+                      )}
+                      {formData.trainingMode === 'unsupervised' && (
+                        <>
+                          <p className="mb-2">Your model will discover patterns without labels:</p>
+                          <ul className="list-disc list-inside space-y-1 text-xs">
+                            <li>Automatic feature extraction and clustering</li>
+                            <li>Anomaly detection and outlier identification</li>
+                            <li>Dimensionality reduction and representation learning</li>
+                            <li>Self-supervised pre-training</li>
+                          </ul>
+                        </>
+                      )}
+                      {formData.trainingMode === 'reinforcement' && (
+                        <>
+                          <p className="mb-2">Your model will learn through rewards (RLHF):</p>
+                          <ul className="list-disc list-inside space-y-1 text-xs">
+                            <li>Reinforcement Learning from Human Feedback</li>
+                            <li>Reward model training from preferences</li>
+                            <li>Policy optimization for better responses</li>
+                            <li>Continuous improvement through interaction</li>
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Submit Button */}
             <div className="flex justify-end space-x-4 pt-6">

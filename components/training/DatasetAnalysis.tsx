@@ -48,6 +48,18 @@ export default function DatasetAnalysis({ data }: DatasetAnalysisProps) {
               <span className="text-gray-600">Task Type:</span>
               <span className="font-semibold text-gray-900 capitalize">{data.datasetInfo.taskType}</span>
             </div>
+            {data.datasetInfo.trainingMode && (
+              <div className="flex justify-between">
+                <span className="text-gray-600">Training Mode:</span>
+                <span className="font-semibold text-gray-900 capitalize">{data.datasetInfo.trainingMode}</span>
+              </div>
+            )}
+            {data.datasetInfo.creationMode && (
+              <div className="flex justify-between">
+                <span className="text-gray-600">Creation Mode:</span>
+                <span className="font-semibold text-gray-900 capitalize">{data.datasetInfo.creationMode === 'from-scratch' ? 'From Scratch' : 'Fine-tune'}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -68,6 +80,10 @@ export default function DatasetAnalysis({ data }: DatasetAnalysisProps) {
             <div>
               <span className="text-gray-600 block mb-1">Suggested Batch Size:</span>
               <span className="text-sm font-medium text-gray-900">{data.recommendations.suggestedBatchSize}</span>
+            </div>
+            <div>
+              <span className="text-gray-600 block mb-1">Training Mode:</span>
+              <span className="text-sm font-medium text-gray-900">{data.recommendations.trainingMode}</span>
             </div>
             <div>
               <span className="text-gray-600 block mb-1">Compute Type:</span>

@@ -47,25 +47,35 @@ export default function TrainingClient({ model: initialModel, userId }: Training
     // Mock analysis data based on model configuration
     const computeType = model.model_config?.compute_type || 'cpu'
     const taskType = model.model_config?.task_type || 'classification'
+    const trainingMode = model.training_mode || model.model_config?.training_mode || 'supervised'
+    const creationMode = model.model_config?.creation_mode || 'fine-tune'
+    const autoFindDataset = model.model_config?.auto_find_dataset || false
     
     const mockAnalysis = {
       datasetInfo: {
-        rows: 50000,
+        rows: autoFindDataset ? 100000 : 50000,
         columns: 15,
         features: ['feature1', 'feature2', 'feature3', 'feature4', 'feature5'],
         targetColumn: model.model_config?.target_class || 'label',
         taskType: taskType,
+        trainingMode: trainingMode,
+        creationMode: creationMode,
         dataTypes: {
           numerical: 10,
           categorical: 5,
         },
       },
       recommendations: {
-        modelArchitecture: `${model.model_type} with PyTorch ${computeType.toUpperCase()}`,
-        suggestedEpochs: computeType === 'tpu' ? 5 : computeType === 'gpu' ? 8 : 10,
+        modelArchitecture: creationMode === 'from-scratch' 
+          ? `Custom ${trainingMode} model with PyTorch ${computeType.toUpperCase()}`
+          : `${model.model_type} fine-tuning with PyTorch ${computeType.toUpperCase()}`,
+        suggestedEpochs: trainingMode === 'reinforcement' ? 20 : (computeType === 'tpu' ? 5 : computeType === 'gpu' ? 8 : 10),
         suggestedBatchSize: computeType === 'tpu' ? 64 : computeType === 'gpu' ? 32 : 16,
-        estimatedTime: computeType === 'tpu' ? '5-8 minutes' : computeType === 'gpu' ? '10-15 minutes' : '15-25 minutes',
+        estimatedTime: trainingMode === 'reinforcement' 
+          ? '30-45 minutes' 
+          : (computeType === 'tpu' ? '5-8 minutes' : computeType === 'gpu' ? '10-15 minutes' : '15-25 minutes'),
         computeType: computeType.toUpperCase(),
+        trainingMode: trainingMode.charAt(0).toUpperCase() + trainingMode.slice(1),
       },
       codeGenerated: true,
     }

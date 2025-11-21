@@ -24,9 +24,31 @@ export class HuggingFaceAPI {
     this.token = token
   }
 
-  // Create a new model repository
+  // Get user info
+  async getUserInfo(): Promise<{ username: string } | null> {
+    try {
+      const response = await fetch(`${this.baseUrl}/whoami-v2`, {
+        headers: {
+          'Authorization': `Bearer ${this.token}`,
+        },
+      })
+
+      if (!response.ok) {
+        return null
+      }
+
+      const data = await response.json()
+      return { username: data.name || data.username }
+    } catch (error) {
+      console.error('Failed to get user info:', error)
+      return null
+    }
+  }
+
+  // Create a new model repository using the correct API
   async createRepo(repoName: string, config: HFModelConfig): Promise<HFUploadResponse> {
     try {
+      // Use the correct HuggingFace API endpoint
       const response = await fetch(`${this.baseUrl}/repos/create`, {
         method: 'POST',
         headers: {
@@ -34,23 +56,25 @@ export class HuggingFaceAPI {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: repoName,
           type: 'model',
+          name: repoName,
+          organization: null,
           private: false,
-          description: config.description,
-          license: config.license || 'apache-2.0',
+          sdk: 'gradio',
+          hardware: 'cpu-basic',
         }),
       })
 
       if (!response.ok) {
-        const error = await response.text()
-        throw new Error(`Failed to create repo: ${error}`)
+        const errorText = await response.text()
+        console.error('HF API Error:', errorText)
+        throw new Error(`Failed to create repo: ${response.status} ${errorText}`)
       }
 
       const result = await response.json()
       return {
         success: true,
-        repoUrl: `https://huggingface.co/${result.name}`,
+        repoUrl: result.url || `https://huggingface.co/${repoName}`,
       }
     } catch (error) {
       console.error('HF API Error:', error)
@@ -61,32 +85,38 @@ export class HuggingFaceAPI {
     }
   }
 
-  // Upload model files
-  async uploadModelFiles(repoName: string, files: { [filename: string]: string }): Promise<boolean> {
+  // Upload file to repository using HuggingFace Hub API
+  async uploadFile(repoId: string, filename: string, content: string): Promise<boolean> {
     try {
-      for (const [filename, content] of Object.entries(files)) {
-        const response = await fetch(`${this.baseUrl}/repos/${repoName}/upload/${filename}`, {
-          method: 'PUT',
+      const response = await fetch(
+        `https://huggingface.co/api/repos/${repoId}/upload/main/${filename}`,
+        {
+          method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.token}`,
-            'Content-Type': 'application/octet-stream',
+            'Content-Type': 'application/x-ndjson',
           },
-          body: content,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Failed to upload ${filename}`)
+          body: JSON.stringify({
+            content: content,
+            encoding: 'utf-8',
+          }),
         }
+      )
+
+      if (!response.ok) {
+        console.error(`Failed to upload ${filename}:`, await response.text())
+        return false
       }
+
       return true
     } catch (error) {
-      console.error('Upload error:', error)
+      console.error(`Upload error for ${filename}:`, error)
       return false
     }
   }
 
   // Generate model card (README.md)
-  generateModelCard(config: HFModelConfig, metrics?: any): string {
+  generateModelCard(config: HFModelConfig, metrics?: any, repoName?: string): string {
     const tags = [
       config.framework.toLowerCase(),
       config.modelType.toLowerCase(),
@@ -120,8 +150,8 @@ ${config.description || 'A model trained using Pipeline AI platform.'}
 \`\`\`python
 from transformers import AutoTokenizer, AutoModel
 
-tokenizer = AutoTokenizer.from_pretrained("${config.name}")
-model = AutoModel.from_pretrained("${config.name}")
+tokenizer = AutoTokenizer.from_pretrained("${repoName || config.name}")
+model = AutoModel.from_pretrained("${repoName || config.name}")
 
 # Your inference code here
 \`\`\`
@@ -146,7 +176,7 @@ If you use this model, please cite:
   title={${config.name}},
   author={Pipeline AI},
   year={2024},
-  url={https://huggingface.co/${config.name}}
+  url={https://huggingface.co/${repoName || config.name}}
 }
 \`\`\`
 
@@ -164,43 +194,44 @@ If you use this model, please cite:
     metrics?: any
   ): Promise<HFUploadResponse> {
     try {
-      // Step 1: Create repository
-      const repoResult = await this.createRepo(repoName, config)
+      // Step 1: Get user info to create proper repo name
+      const userInfo = await this.getUserInfo()
+      if (!userInfo) {
+        throw new Error('Failed to authenticate with HuggingFace. Please check your token.')
+      }
+
+      const fullRepoName = `${userInfo.username}/${repoName}`
+
+      // Step 2: Create repository
+      const repoResult = await this.createRepo(fullRepoName, config)
       if (!repoResult.success) {
         return repoResult
       }
 
-      // Step 2: Generate model files
-      const files: { [filename: string]: string } = {
-        'README.md': this.generateModelCard(config, metrics),
-        'config.json': JSON.stringify({
-          model_type: config.modelType.toLowerCase(),
-          task_type: config.taskType,
-          framework: config.framework,
-          pipeline_tag: config.taskType === 'classification' ? 'text-classification' : config.taskType,
-          created_by: 'Pipeline AI',
-          ...modelData.config,
-        }, null, 2),
+      // Step 3: Upload README.md (model card)
+      const readme = this.generateModelCard(config, metrics, fullRepoName)
+      const readmeSuccess = await this.uploadFile(fullRepoName, 'README.md', readme)
+      
+      if (!readmeSuccess) {
+        console.warn('Failed to upload README.md, but repo was created')
       }
 
-      // Add model-specific files based on framework
-      if (config.framework.toLowerCase() === 'pytorch') {
-        files['pytorch_model.bin'] = modelData.weights || 'mock-model-weights'
-        files['tokenizer.json'] = JSON.stringify(modelData.tokenizer || {})
-      }
-
-      // Step 3: Upload files
-      const uploadSuccess = await this.uploadModelFiles(repoName, files)
-      if (!uploadSuccess) {
-        return {
-          success: false,
-          error: 'Failed to upload model files',
-        }
-      }
+      // Step 4: Upload config.json
+      const configJson = JSON.stringify({
+        model_type: config.modelType.toLowerCase(),
+        task_type: config.taskType,
+        framework: config.framework,
+        pipeline_tag: config.taskType === 'classification' ? 'text-classification' : config.taskType,
+        created_by: 'Pipeline AI',
+        architectures: [config.modelType],
+        ...modelData.config,
+      }, null, 2)
+      
+      await this.uploadFile(fullRepoName, 'config.json', configJson)
 
       return {
         success: true,
-        repoUrl: `https://huggingface.co/${repoName}`,
+        repoUrl: `https://huggingface.co/${fullRepoName}`,
       }
     } catch (error) {
       return {

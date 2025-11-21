@@ -29,73 +29,49 @@ export default function DeploymentForm({ onDeploy, model, metrics }: DeploymentF
     setErrorMessage('')
 
     try {
-      // Step 1: Validate token
-      const hfAPI = createHuggingFaceAPI(hfToken)
-      const isValidToken = await hfAPI.validateToken()
-      
-      if (!isValidToken) {
-        // Try mock deployment for demo
-        setDeploymentStatus('creating')
-        const repoName = `${model?.name?.toLowerCase().replace(/\s+/g, '-') || 'pipeline-model'}-${Date.now()}`
-        
-        const config: HFModelConfig = {
-          name: repoName,
-          description: model?.description || 'A model trained using Pipeline AI',
-          framework: model?.framework || 'pytorch',
-          modelType: model?.model_type || 'transformer',
-          taskType: model?.model_config?.task_type || 'classification',
-          tags: ['pipeline-ai', 'auto-generated'],
-        }
-
-        setDeploymentStatus('uploading')
-        const result = await mockHuggingFaceDeployment(repoName, config, metrics)
-        
-        if (result.success) {
-          setDeploymentStatus('success')
-          setDeploymentUrl(result.repoUrl!)
-          onDeploy(hfToken)
-        } else {
-          throw new Error(result.error || 'Deployment failed')
-        }
-        return
-      }
-
-      // Step 2: Create repository name
       setDeploymentStatus('creating')
-      const username = 'user' // In real implementation, get from HF API
-      const repoName = `${username}/${model?.name?.toLowerCase().replace(/\s+/g, '-') || 'pipeline-model'}`
-      
-      const config: HFModelConfig = {
-        name: repoName,
-        description: model?.description || 'A model trained using Pipeline AI platform',
-        framework: model?.framework || 'pytorch',
-        modelType: model?.model_type || 'transformer',
-        taskType: model?.model_config?.task_type || 'classification',
-        tags: ['pipeline-ai', 'auto-generated'],
-      }
 
-      // Step 3: Deploy model
-      setDeploymentStatus('uploading')
-      const modelData = {
-        config: model?.model_config || {},
-        weights: 'mock-weights', // In real implementation, use actual model weights
-        tokenizer: {}, // In real implementation, use actual tokenizer
-      }
+      // Call our API route to handle deployment
+      const response = await fetch('/api/deploy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: hfToken,
+          modelName: model?.name || 'Pipeline Model',
+          modelConfig: {
+            ...model?.model_config,
+            framework: model?.framework,
+            model_type: model?.model_type,
+            training_mode: model?.training_mode || model?.model_config?.training_mode || 'supervised',
+            compute_type: model?.model_config?.compute_type,
+            target_class: model?.model_config?.target_class,
+          },
+          metrics: metrics,
+        }),
+      })
 
-      const result = await hfAPI.deployModel(repoName, config, modelData, metrics)
-      
-      if (result.success) {
-        setDeploymentStatus('success')
-        setDeploymentUrl(result.repoUrl!)
-        onDeploy(hfToken)
-      } else {
+      const result = await response.json()
+
+      if (!response.ok) {
         throw new Error(result.error || 'Deployment failed')
       }
+
+      setDeploymentStatus('success')
+      setDeploymentUrl(result.repoUrl)
+      
+      // Show success message
+      setTimeout(() => {
+        alert(`✅ Model deployed successfully!\n\n🔗 Repository: ${result.repoUrl}\n\n📝 Note: The repository has been created with a model card. You can now upload your model weights to complete the deployment.`)
+      }, 500)
+      
+      onDeploy(hfToken)
 
     } catch (error) {
       console.error('Deployment error:', error)
       setDeploymentStatus('error')
-      setErrorMessage(error instanceof Error ? error.message : 'Deployment failed')
+      setErrorMessage(error instanceof Error ? error.message : 'Deployment failed. Please check your token and try again.')
     } finally {
       setDeploying(false)
     }
