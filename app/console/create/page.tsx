@@ -14,6 +14,7 @@ export default function CreateModelPage() {
     description: '',
     creationMode: 'fine-tune', // 'fine-tune' or 'from-scratch'
     trainingMode: 'supervised', // 'supervised', 'unsupervised', 'reinforcement'
+    modelDescription: '', // AI prompt for from-scratch
     modelType: '',
     taskType: '',
     targetClass: '',
@@ -240,6 +241,26 @@ export default function CreateModelPage() {
                     </div>
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* AI Model Description (for from-scratch) */}
+            {formData.creationMode === 'from-scratch' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">
+                  🤖 Describe Your Model to AI *
+                </label>
+                <textarea
+                  required
+                  value={formData.modelDescription}
+                  onChange={(e) => setFormData({ ...formData, modelDescription: e.target.value })}
+                  className="form-textarea"
+                  rows={4}
+                  placeholder="Example: I want to build a sentiment analysis model that can classify movie reviews as positive or negative. It should be accurate and fast, suitable for real-time applications..."
+                />
+                <p className="text-xs text-gray-600 mt-1">
+                  💡 Describe what you want your model to do. AI will analyze and suggest the best configuration.
+                </p>
               </div>
             )}
 

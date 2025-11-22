@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # Python Training Service
+  training-service:
+    build: ./python-service
+    ports:
+      - "8000:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  # Next.js App
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - PYTHON_SERVICE_URL=http://training-service:8000
+      - NEXT_PUBLIC_PYTHON_SERVICE_URL=http://localhost:8000
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - training-service
+    restart: unless-stopped
+
+volumes:
+  models:
+  logs:
